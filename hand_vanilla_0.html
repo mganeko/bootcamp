@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html>
+ <head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <meta charset="utf-8">
+ </head>
+ <body>
+  <button type="button" onclick="startCamera();">Start video</button>
+  <button type="button" onclick="stopCamera();">Stop video</button>
+  <button type="button" onclick="connect();">Connect</button>
+  <button type="button" onclick="hangUp();">Hang Up</button></p>
+  <div>
+   <video id="local_video" autoplay style="width: 240px; height: 180px; border: 1px solid black;"></video>
+   <video id="remote_video" autoplay style="width: 240px; height: 180px; border: 1px solid black;"></video>
+  </div>
+  <p>
+   SDP to send:<br />
+   <textarea id="text_for_send_sdp" rows="5" cols="70" readonly="readonly">SDP to send</textarea>
+  </p>
+  <p>
+   SDP to receive:<br />
+   <textarea id="text_for_receive_sdp" rows="5" cols="70"></textarea>
+   <br />
+   <button type="button" onclick="onSDPText();">Receive SDP</button>
+  </p>
+ </body>
+ <script type="text/javascript">
+  var localVideo = document.getElementById('local_video');
+  var remoteVideo = document.getElementById('remote_video');
+  var textForSendSDP = document.getElementById('text_for_send_sdp');
+  var textToReceiveSDP = document.getElementById('text_for_receive_sdp');
+
+  var localStream = null;
+  var peerConnection = null;
+  var mediaConstraints = {};
+
+  // --- prefix -----
+  navigator.getUserMedia  = navigator.getUserMedia    || navigator.webkitGetUserMedia ||
+                            navigator.mozGetUserMedia || navigator.msGetUserMedia;
+  RTCPeerConnection = window.RTCPeerConnection || window.webkitRTCPeerConnection || window.mozRTCPeerConnection;
+  RTCSessionDescription = window.RTCSessionDescription || window.webkitRTCSessionDescription || window.mozRTCSessionDescription;
+
+  // ------- hand signaling ------
+  function onSDPText() {
+    var text = textToReceiveSDP.value;
+    if (peerConnection) {
+      // 自分がOffer側のケース。SDPをAnswerとして受け取る
+      setAnswerText(text);
+    }
+    else {
+      // 自分がAnswer側のケース
+      
+      // PeerConnectionを作成
+      peerConnection = preparePeerConnection();
+
+      // SDPをOfferとして受け取る
+      setOfferText(text);
+    }
+    
+    // 受け取ったSDPをクリアする
+    textToReceiveSDP.value ='';
+  }
+ 
+  // SDPをテキストエリアに表示する
+  function sendSDPText(text) {
+    console.log('---sending sdp text ---');	
+    textForSendSDP.value = text;
+    textForSendSDP.focus();
+    textForSendSDP.select();
+  }
+ 
+  // ---------------------- video handling -----------------------
+  // start local video
+  function startCamera() {
+    navigator.getUserMedia( {video : true},
+      function(stream) { // success
+        localStream = stream;
+        localVideo.src = window.URL.createObjectURL(localStream);
+        localVideo.play();
+        localVideo.volume = 0;
+      },
+      function(err) { // error
+        console.err('getUserMedia error: ', err);
+      }
+    );
+  }
+
+  // stop local video
+  function stopCamera() {
+    localVideo.pause();
+    if (localVideo.src && (localVideo.src !== '')) {
+      window.URL.revokeObjectURL(localVideo.src);
+    }
+    localVideo.src = '';
+    stopStream(localStream);
+    localStream = null;
+  }
+  
+  // meidaStreamをきちんと停止させるための関数
+  function stopStream(stream) {
+    if (!stream) {
+      console.warn('NO stream');
+      return;
+    }
+    
+    var tracks = stream.getTracks();
+    if (! tracks) {
+      console.warn('NO tracks');
+      return;
+    }
+
+    for (index in tracks) {
+      tracks[index].stop();
+    } 
+  }
+
+  // ---------------------- connection handling -----------------------
+    // 自分がOffer側となって接続する
+  function connect() {
+    if (peerConnection) {
+      console.warn('peerConnection already started');
+      return;
+    }
+    
+    // PeerConnectionを作成
+    peerConnection = preparePeerConnection();
+    
+    // 自分がOfferを出す
+    makeOffer();
+  }
+
+  // 切断する
+  function hangUp() {
+    if (peerConnection) {
+      peerConnection.close();
+      peerConnection = null;
+    }
+  }
+  
+  // PeerConnectionを作成
+  function preparePeerConnection() {
+    var peer = null;
+    try {
+      peer = new RTCPeerConnection({'iceServers':[]});
+    } catch (err) {
+      console.error('Failed to create peerConnection:', err);
+      return null;
+    }
+
+    // 自分のメディアストリームを追加
+    if (localStream) {
+      console.log('Add local stream');
+      peer.addStream(localStream);
+    }
+    
+    // 自分のICE candidateの処理
+    peer.addEventListener('icecandidate',
+      function (evt) {
+        if (evt.candidate) {
+          console.log(evt.candidate);
+          // ※Trickle ICEの場合は、順次ICE candidateを相手に送信する
+          // ※Vanilla ICEの場合には、まだ送らない        
+        } else {
+          // 全てのICE candidateが収集し終わったタイミング
+          // ※Vanilla ICEの場合には、ここでICE candidateを含むSDPを送る  
+          console.log('empty ice event, send SDP now');
+          sendSDPText(peer.localDescription.sdp);
+        }
+      },
+      false
+    );
+
+    // 相手のメディアストリームが追加された時の処理
+    peer.addEventListener('addstream',
+      function (event) {
+        remoteVideo.src = window.URL.createObjectURL(event.stream);
+        remoteVideo.play();    
+      },
+      false
+    );
+    
+    // 相手のメディアストリームが除去された時の処理    
+    peer.addEventListener('removestream',
+      function (event) {
+        console.log('Remove remote stream');
+        removeVideo.pause();
+        remoteVideo.src = '';
+      },
+      false
+    );
+
+    return peer;
+  }
+
+  // Offerを生成する
+  function makeOffer() {
+    // (1) createOfferを呼び出して、Offer SDPを生成する
+
+      // (2) 生成されたSDPを、peerConnetionにセットする
+      //    ※Vanilla ICEを用いるため、すぐにはOfferを相手に送信しない
+
+  }
+
+  // Offerを受け取る
+  function setOfferText(text) {
+    // SDPの文字列からRTCSessionDescriptionのオブジェクトを生成
+    var offer = new RTCSessionDescription({
+      type : 'offer',
+      sdp : text,
+    });
+    
+    // (3) 生成したオブジェクトを、peerConnetionにセットする
+    // 相手側のSDPをセットする
+        
+        // (4) さらに、適切なタイミングで用意している関数 makeAnswer() を呼び出す
+        // コールバックが呼ばれたら、Answerを生成する
+  }
+  
+  // Answer を生成する
+  function makeAnswer() {
+    // (5) createAnswerを呼び出して、Answer SDPを生成する
+
+      // (6) 生成されたSDPを、peerConnetionにセットする
+      //    ※Vanilla ICEを用いるため、すぐにはOfferを相手に送信しない
+  }
+
+  // Answerを受け取る
+  function setAnswerText(text) {
+    // SDPの文字列からRTCSessionDescriptionのオブジェクトを生成
+    var answer = new RTCSessionDescription({
+      type : 'answer',
+      sdp : text,
+    });
+   
+    // (7) 生成したオブジェクトを、peerConnetionにセットする
+    // 相手側のSDPをセットする
+  }
+
+</script>
+</html>
+
+

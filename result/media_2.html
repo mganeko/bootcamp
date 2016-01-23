@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+ <head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  <meta charset="utf-8">
+  <title>getUserMedia</title>
+ </head>
+ <body>
+   <button onclick="startCamera();">start</button>
+   <button onclick="stopCamera();">stop</button>
+   <br />
+   <video id="local_video" />
+ </body>
+ <script>
+  navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+  var localVideo = document.getElementById('local_video'); // 表示用のvideoタグ
+  var localStream = null; // メディアストリームを保持しておく
+  
+  function startCamera() {
+    // (1) getUserMediaを使って、cameraからメディアストリームを取得してください
+    //     また、それをlocalStreamにセットしておいてください
+    navigator.getUserMedia( {video : true},
+      function(stream) { // success
+        localStream = stream;
+
+        // (2) それを localVideo に表示してください
+        localVideo.src = window.URL.createObjectURL(localStream);
+        localVideo.play();
+      },
+      function(err) { // error
+        console.err('getUserMedia error', err);
+      }
+    );
+  }
+  
+  function stopCamera() {
+    // (3) localVideoの再生を停止させてください
+    
+    // (4) メディアストリームを停止させてください
+    // ※注意：mediaStream.stop()は、Chrome 47から使えなくなりました
+    // localStream.stop(); //Chrome 47 NG, Firefox 43 OK
+  }
+  
+  // meidaStreamをきちんと停止させるための関数
+  function stopStream(stream) {
+    if (!stream) {
+      console.warn('NO stream');
+      return;
+    }
+    
+    var tracks = stream.getTracks();
+    if (! tracks) {
+      console.warn('NO tracks');
+      return;
+    }
+
+    for (index in tracks) {
+      tracks[index].stop();
+    } 
+  }  
+ </script>
+</html>
